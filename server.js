@@ -1,10 +1,11 @@
- 
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
+const cors = require('cors');
 
 const app = express();
+app.use(cors()); // Разрешаем кросс-доменные запросы
 app.use(express.json());
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -83,19 +84,66 @@ app.post('/submit-preferences', async (req, res) => {
                     return res.status(500).json({ error: 'Failed to save results' });
                 }
 
-                return res.json({ status: 'ready' });
+                return res.status(200).json({ status: 'ready' });
             } catch (apiError) {
-                console.error('Error calling Kinopoisk API:', apiError);
-                return res.status(500).json({ error: 'Failed to fetch movies from Kinopoisk' });
+                console.error('Error fetching movies:', apiError);
+                return res.status(500).json({ error: 'Failed to fetch movies' });
             }
+        } else {
+            return res.status(200).json({ status: 'waiting' });
+        }
+    } catch (error) {
+        console.error('Unexpected error:', error);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+app.get('/check-status', async (req, res) => {
+    const { room_id } = req.query;
+
+    if (!room_id) {
+        return res.status(400).json({ error: 'room_id is required' });
+    }
+
+    try {
+        // Проверяем, есть ли результаты для комнаты
+        const { data: results, error: resultError } = await supabase
+            .from('room_results')
+            .select('room_id')
+            .eq('room_id', room_id);
+
+        if (resultError) {
+            console.error('Error checking room results:', resultError);
+            return res.status(500).json({ error: 'Failed to check status' });
         }
 
-        return res.json({ status: 'waiting' });
+        if (results.length > 0) {
+            return res.status(200).json({ status: 'ready' });
+        }
+
+        // Проверяем, есть ли предпочтения
+        const { data: preferences, error: prefError } = await supabase
+            .from('user_preferences')
+            .select('room_id')
+            .eq('room_id', room_id);
+
+        if (prefError) {
+            console.error('Error checking preferences:', prefError);
+            return res.status(500).json({ error: 'Failed to check preferences' });
+        }
+
+        if (preferences.length > 0) {
+            return res.status(200).json({ status: 'waiting' });
+        }
+
+        return res.status(404).json({ error: 'Room not found' });
     } catch (error) {
-        console.error('Server error:', error);
-        return res.status(500).json({ error: 'Server error' });
+        console.error('Unexpected error:', error);
+        return res.status(500).json({ error: 'Internal server error' });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
