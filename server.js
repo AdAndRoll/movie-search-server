@@ -100,7 +100,7 @@ app.post('/submit-preferences', async (req, res) => {
             ['name', 'description', 'poster.url'].forEach(field => params.append('notNullFields', field));
             params.append('sortField', 'rating.kp');
             params.append('sortType', '-1');
-            params.append('type', 'movie');
+            ['movie', 'cartoon', 'anime'].forEach(type => params.append('type', type)); // Добавляем все типы
 
             // Обрабатываем диапазоны годов
             if (mergedRanges.length > 0) {
@@ -138,6 +138,7 @@ app.post('/submit-preferences', async (req, res) => {
 
                 console.log('Fetched movies:', movies.length);
                 console.log('Years in results:', [...new Set(movies.map(m => m.year))]);
+                console.log('Types in results:', [...new Set(movies.map(m => m.type))]);
 
                 // Сохраняем результаты в room_results
                 const { error: resultError } = await supabase
