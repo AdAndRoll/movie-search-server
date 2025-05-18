@@ -14,6 +14,14 @@ app.post('/submit-preferences', async (req, res) => {
     const { user_id, room_id, genres, years } = req.body;
 
     try {
+        // Валидация входных данных
+        if (!user_id || !room_id || !genres || !years || !Array.isArray(genres) || !Array.isArray(years) || genres.length === 0 || years.length !== 2) {
+            console.error('Invalid request body:', { user_id, room_id, genres, years });
+            return res.status(400).json({ error: 'Invalid request: genres and years must be non-empty arrays' });
+        }
+
+        console.log('Received preferences:', { user_id, room_id, genres, years });
+
         // Сохраняем предпочтения в user_preferences
         const { error: insertError } = await supabase
             .from('user_preferences')
@@ -50,17 +58,20 @@ app.post('/submit-preferences', async (req, res) => {
         if (preferences.length === users.length && preferences.length > 0) {
             // Объединяем жанры (уникальный список)
             const allGenres = [...new Set(preferences.flatMap(p => p.genres))];
-            // Находим пересечение годов
-            const startYears = preferences.map(p => p.years[0]);
-            const endYears = preferences.map(p => p.years[1]);
-            const yearRange = `${Math.max(...startYears)}-${Math.min(...endYears)}`;
+            // Собираем все диапазоны годов
+            const yearRanges = preferences.map(p => `${p.years[0]}-${p.years[1]}`);
+
+            console.log('Aggregated preferences:', { genres: allGenres, yearRanges });
 
             // Формируем запрос к API Кинопоиска
             const params = new URLSearchParams();
             params.append('page', '1');
-            params.append('limit', '15');
-            params.append('year', yearRange);
-            allGenres.forEach(genre => params.append('genres.name', genre));
+            params.append('limit', '50'); // Увеличен лимит до 50
+            yearRanges.forEach(range => params.append('year', range)); // Добавляем все диапазоны годов
+            if (allGenres.length > 0) {
+                params.append('genres.name', allGenres[0]); // Первый жанр без +
+                allGenres.slice(1).forEach(genre => params.append('genres.name', `+${genre}`)); // Остальные с +
+            }
             ['id', 'name', 'year', 'movieLength', 'rating', 'description', 'genres', 'poster'].forEach(field => params.append('selectFields', field));
             ['name', 'description', 'poster.url'].forEach(field => params.append('notNullFields', field));
             params.append('sortField', 'rating.kp');
