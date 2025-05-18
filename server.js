@@ -20,6 +20,12 @@ app.post('/submit-preferences', async (req, res) => {
             return res.status(400).json({ error: 'Invalid request: genres and years must be non-empty arrays' });
         }
 
+        // Валидация диапазона годов
+        if (years[0] > years[1]) {
+            console.error('Invalid year range:', years);
+            return res.status(400).json({ error: 'Invalid year range: start year must be less than or equal to end year' });
+        }
+
         console.log('Received preferences:', { user_id, room_id, genres, years });
 
         // Сохраняем предпочтения в user_preferences
@@ -59,15 +65,36 @@ app.post('/submit-preferences', async (req, res) => {
             // Объединяем жанры (уникальный список)
             const allGenres = [...new Set(preferences.flatMap(p => p.genres))];
             // Собираем все диапазоны годов
-            const yearRanges = preferences.map(p => `${p.years[0]}-${p.years[1]}`);
+            const yearRanges = preferences.map(p => {
+                if (p.years[0] > p.years[1]) {
+                    console.error('Invalid year range in preferences:', p.years);
+                    throw new Error('Invalid year range in preferences');
+                }
+                return { start: p.years[0], end: p.years[1] };
+            });
 
             console.log('Aggregated preferences:', { genres: allGenres, yearRanges });
+
+            // Объединяем пересекающиеся или примыкающие диапазоны
+            const mergedRanges = [];
+            yearRanges.sort((a, b) => a.start - b.start); // Сортируем по началу
+            let current = { ...yearRanges[0] };
+            for (let i = 1; i < yearRanges.length; i++) {
+                const next = yearRanges[i];
+                if (next.start <= current.end + 1) {
+                    current.end = Math.max(current.end, next.end);
+                } else {
+                    mergedRanges.push(current);
+                    current = { ...next };
+                }
+            }
+            mergedRanges.push(current);
+            console.log('Merged year ranges:', mergedRanges);
 
             // Формируем запрос к API Кинопоиска
             const params = new URLSearchParams();
             params.append('page', '1');
-            params.append('limit', '50'); // Увеличен лимит до 50
-            yearRanges.forEach(range => params.append('year', range)); // Добавляем все диапазоны годов
+            params.append('limit', '100'); // Увеличиваем лимит для большего пула фильмов
             allGenres.forEach(genre => params.append('genres.name', genre)); // Все жанры без +
             ['id', 'name', 'year', 'movieLength', 'rating', 'description', 'genres', 'poster'].forEach(field => params.append('selectFields', field));
             ['name', 'description', 'poster.url'].forEach(field => params.append('notNullFields', field));
@@ -75,12 +102,42 @@ app.post('/submit-preferences', async (req, res) => {
             params.append('sortType', '-1');
             params.append('type', 'movie');
 
+            // Обрабатываем диапазоны годов
+            if (mergedRanges.length > 0) {
+                // Выбираем самый широкий диапазон для year=начало-конец
+                const widestRange = mergedRanges.reduce((widest, range) => {
+                    const width = range.end - range.start;
+                    const widestWidth = widest.end - widest.start;
+                    return width > widestWidth ? range : widest;
+                }, mergedRanges[0]);
+                params.append('year', `${widestRange.start}-${widestRange.end}`);
+                console.log('Selected widest range:', widestRange);
+
+                // Для остальных диапазонов перечисляем отдельные годы (до 10 годов)
+                let yearCount = 0;
+                const maxYears = 15;
+                mergedRanges
+                    .filter(range => range !== widestRange)
+                    .forEach(range => {
+                        for (let year = range.end; year >= range.start && yearCount < maxYears; year--) {
+                            params.append('year', year.toString());
+                            yearCount++;
+                        }
+                    });
+                console.log('Enumerated years:', params.getAll('year').slice(1));
+            }
+
+            console.log('Kinopoisk API URL:', `https://api.kinopoisk.dev/v1.4/movie?${params.toString()}`);
+
             try {
                 const response = await axios.get(`https://api.kinopoisk.dev/v1.4/movie?${params.toString()}`, {
                     headers: { 'X-API-KEY': process.env.KINOPOISK_API_KEY }
                 });
 
                 const movies = response.data.docs;
+
+                console.log('Fetched movies:', movies.length);
+                console.log('Years in results:', [...new Set(movies.map(m => m.year))]);
 
                 // Сохраняем результаты в room_results
                 const { error: resultError } = await supabase
