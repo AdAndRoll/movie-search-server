@@ -68,10 +68,7 @@ app.post('/submit-preferences', async (req, res) => {
             params.append('page', '1');
             params.append('limit', '50'); // Увеличен лимит до 50
             yearRanges.forEach(range => params.append('year', range)); // Добавляем все диапазоны годов
-            if (allGenres.length > 0) {
-                params.append('genres.name', allGenres[0]); // Первый жанр без +
-                allGenres.slice(1).forEach(genre => params.append('genres.name', `+${genre}`)); // Остальные с +
-            }
+            allGenres.forEach(genre => params.append('genres.name', genre)); // Все жанры без +
             ['id', 'name', 'year', 'movieLength', 'rating', 'description', 'genres', 'poster'].forEach(field => params.append('selectFields', field));
             ['name', 'description', 'poster.url'].forEach(field => params.append('notNullFields', field));
             params.append('sortField', 'rating.kp');
